@@ -23,6 +23,8 @@ type CacheOnReadFs struct {
 	base      Fs
 	layer     Fs
 	cacheTime time.Duration
+
+	SkipVerifyFresh bool // New Flag
 }
 
 func NewCacheOnReadFs(base Fs, layer Fs, cacheTime time.Duration) Fs {
@@ -49,7 +51,7 @@ func (u *CacheOnReadFs) cacheStatus(name string) (state cacheState, fi os.FileIn
 	var lfi, bfi os.FileInfo
 	lfi, err = u.layer.Stat(name)
 	if err == nil {
-		if u.cacheTime == 0 {
+		if u.SkipVerifyFresh || u.cacheTime == 0 {
 			return cacheHit, lfi, nil
 		}
 		if lfi.ModTime().Add(u.cacheTime).Before(time.Now()) {
@@ -220,6 +222,7 @@ func (u *CacheOnReadFs) OpenFile(name string, flag int, perm os.FileMode) (File,
 			return nil, err
 		}
 	}
+
 	if flag&(os.O_WRONLY|syscall.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		bfi, err := u.base.OpenFile(name, flag, perm)
 		if err != nil {
