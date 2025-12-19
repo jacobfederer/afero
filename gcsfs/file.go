@@ -90,6 +90,12 @@ func NewGcsFileFromOldFH(
 	return res
 }
 
+// SetUploadChunkSizeByte The default chunk size for uploading files to GCS is 16MB.
+// This buffer size may use memory excessively. You can adjust it to a value that is a multiple of 256KiB.
+func (o *GcsFile) SetUploadChunkSizeByte(size int) {
+	o.resource.uploadChunkSizeByte = size
+}
+
 func (o *GcsFile) Close() error {
 	if o.closed {
 		// the afero spec expects the call to Close on a closed file to return an error

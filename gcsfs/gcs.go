@@ -85,6 +85,10 @@ func (fs *GcsFs) Name() string {
 	return fs.source.Name()
 }
 
+func (fs *GcsFs) SetUploadChunkSizeByte(size int) {
+	fs.source.SetUploadChunkSizeByte(size)
+}
+
 func (fs *GcsFs) Create(name string) (afero.File, error) {
 	return fs.source.Create(name)
 }

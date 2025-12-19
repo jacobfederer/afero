@@ -46,6 +46,8 @@ type gcsFileResource struct {
 	name     string
 	fileMode os.FileMode
 
+	uploadChunkSizeByte int
+
 	currentGcsSize int64
 	offset         int64
 	reader         io.ReadCloser
@@ -185,6 +187,16 @@ func (o *gcsFileResource) WriteAt(b []byte, off int64) (n int, err error) {
 	//
 	// It will however require a download and upload of the original file but it
 	// can't be avoided if we should support seek-write-operations on GCS.
+
+	chunkSize := o.fs.UploadChunkSizeByte
+	if o.uploadChunkSizeByte != 0 {
+		chunkSize = o.uploadChunkSizeByte
+	}
+
+	if chunkSize != 0 {
+		w.SetChunkSize(chunkSize)
+	}
+
 	objAttrs, err := o.obj.Attrs(o.ctx)
 	if err != nil {
 		if off > 0 {
