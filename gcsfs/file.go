@@ -90,9 +90,10 @@ func NewGcsFileFromOldFH(
 	return res
 }
 
-// SetUploadChunkSizeByte The default chunk size for uploading files to GCS is 16MB.
-// This buffer size may use memory excessively. You can adjust it to a value that is a multiple of 256KiB.
-func (o *GcsFile) SetUploadChunkSizeByte(size int) {
+// SetUploadChunkSizeByte sets the chunk size for uploads.
+// To disable chunking, set this to 0.
+// For custom sizes, GCS requires multiples of 256KiB (262144 bytes).
+func (o *GcsFile) SetUploadChunkSizeByte(size *int) {
 	o.resource.uploadChunkSizeByte = size
 }
 

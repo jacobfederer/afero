@@ -43,7 +43,7 @@ type Fs struct {
 	rawGcsObjects map[string]*GcsFile
 
 	autoRemoveEmptyFolders bool // trigger for creating "virtual folders" (not required by GCSs)
-	UploadChunkSizeByte    int
+	UploadChunkSizeByte    *int
 }
 
 func NewGcsFs(ctx context.Context, client stiface.Client) *Fs {
@@ -63,7 +63,7 @@ func NewGcsFsWithSeparator(ctx context.Context, client stiface.Client, folderSep
 
 // SetUploadChunkSizeByte The default chunk size for uploading files to GCS is 16MB.
 // This buffer size may use memory excessively. You can adjust it to a value that is a multiple of 256KiB.
-func (fs *Fs) SetUploadChunkSizeByte(uploadChunkSize int) {
+func (fs *Fs) SetUploadChunkSizeByte(uploadChunkSize *int) {
 	fs.UploadChunkSizeByte = uploadChunkSize
 }
 

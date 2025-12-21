@@ -85,7 +85,10 @@ func (fs *GcsFs) Name() string {
 	return fs.source.Name()
 }
 
-func (fs *GcsFs) SetUploadChunkSizeByte(size int) {
+// SetUploadChunkSizeByte sets the chunk size for uploads.
+// To disable chunking, set this to 0.
+// For custom sizes, GCS requires multiples of 256KiB (262144 bytes).
+func (fs *GcsFs) SetUploadChunkSizeByte(size *int) {
 	fs.source.SetUploadChunkSizeByte(size)
 }
 
