@@ -58,6 +58,7 @@ func NewGcsFsWithSeparator(ctx context.Context, client stiface.Client, folderSep
 		client:        client,
 		separator:     folderSep,
 		rawGcsObjects: make(map[string]*GcsFile),
+		buckets:       make(map[string]stiface.BucketHandle),
 
 		autoRemoveEmptyFolders: true,
 	}
@@ -121,6 +122,9 @@ func (fs *Fs) getBucket(name string) (stiface.BucketHandle, error) {
 		if err != nil {
 			return nil, err
 		}
+		fs.mu.Lock()
+		fs.buckets[name] = bucket
+		fs.mu.Unlock()
 	}
 	return bucket, nil
 }
