@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,7 @@ type Fs struct {
 	client    stiface.Client
 	separator string
 
+	mu            sync.RWMutex // Mutex to protect maps
 	buckets       map[string]stiface.BucketHandle
 	rawGcsObjects map[string]*GcsFile
 
@@ -109,7 +111,10 @@ func (fs *Fs) splitName(name string) (bucketName string, path string) {
 }
 
 func (fs *Fs) getBucket(name string) (stiface.BucketHandle, error) {
+	fs.mu.RLock()
 	bucket := fs.buckets[name]
+	fs.mu.RUnlock()
+
 	if bucket == nil {
 		bucket = fs.client.Bucket(name)
 		_, err := bucket.Attrs(fs.ctx)
@@ -161,7 +166,9 @@ func (fs *Fs) Create(name string) (*GcsFile, error) {
 	}
 	file := NewGcsFile(fs.ctx, fs, obj, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0, name)
 
+	fs.mu.Lock()
 	fs.rawGcsObjects[name] = file
+	fs.mu.Unlock()
 	return file, nil
 }
 
@@ -304,7 +311,9 @@ func (fs *Fs) Remove(name string) error {
 	if err != nil {
 		return err
 	}
+	fs.mu.Lock()
 	delete(fs.rawGcsObjects, name)
+	fs.mu.Unlock()
 
 	if info.IsDir() {
 		// it's a folder, we ha to check its contents - it cannot be removed, if not empty
@@ -398,7 +407,9 @@ func (fs *Fs) Rename(oldName, newName string) error {
 	if _, err = dst.CopierFrom(src).Run(fs.ctx); err != nil {
 		return err
 	}
+	fs.mu.Lock()
 	delete(fs.rawGcsObjects, oldName)
+	fs.mu.Unlock()
 	return src.Delete(fs.ctx)
 }
 
