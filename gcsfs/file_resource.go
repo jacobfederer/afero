@@ -58,7 +58,6 @@ type gcsFileResource struct {
 
 func (o *gcsFileResource) Close() error {
 	o.closed = true
-	// TODO rawGcsObjectsMap ?
 	return o.maybeCloseIo()
 }
 
