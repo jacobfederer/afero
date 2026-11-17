@@ -38,6 +38,7 @@ type File struct {
 	readDirCount int64
 	closed       bool
 	readOnly     bool
+	dirBuf       []*FileData
 	fileData     *FileData
 }
 
@@ -121,6 +122,7 @@ func (f *File) Open() error {
 	atomic.StoreInt64(&f.at, 0)
 	atomic.StoreInt64(&f.readDirCount, 0)
 	f.fileData.Lock()
+	f.dirBuf = nil
 	f.closed = false
 	f.fileData.Unlock()
 	return nil
@@ -128,11 +130,14 @@ func (f *File) Open() error {
 
 func (f *File) Close() error {
 	f.fileData.Lock()
+	defer f.fileData.Unlock()
+	if f.closed {
+		return ErrFileClosed
+	}
 	f.closed = true
 	if !f.readOnly {
 		setModTime(f.fileData, time.Now())
 	}
-	f.fileData.Unlock()
 	return nil
 }
 
@@ -159,7 +164,10 @@ func (f *File) Readdir(count int) (res []os.FileInfo, err error) {
 	var outLength int64
 
 	f.fileData.Lock()
-	files := f.fileData.memDir.Files()[f.readDirCount:]
+	if f.dirBuf == nil {
+		f.dirBuf = f.fileData.memDir.Files()
+	}
+	files := f.dirBuf[f.readDirCount:]
 	if count > 0 {
 		if len(files) < count {
 			outLength = int64(len(files))
@@ -205,33 +213,36 @@ func (f *File) ReadDir(n int) ([]fs.DirEntry, error) {
 	return di, nil
 }
 
-func (f *File) Read(b []byte) (n int, err error) {
+func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
 	f.fileData.Lock()
 	defer f.fileData.Unlock()
 	if f.closed {
 		return 0, ErrFileClosed
 	}
-	if len(b) > 0 && int(f.at) == len(f.fileData.data) {
+	if len(b) > 0 && int(off) == len(f.fileData.data) {
 		return 0, io.EOF
 	}
-	if int(f.at) > len(f.fileData.data) {
+	if int(off) > len(f.fileData.data) {
 		return 0, io.ErrUnexpectedEOF
 	}
-	if len(f.fileData.data)-int(f.at) >= len(b) {
+	if len(f.fileData.data)-int(off) >= len(b) {
 		n = len(b)
 	} else {
-		n = len(f.fileData.data) - int(f.at)
+		n = len(f.fileData.data) - int(off)
 	}
-	copy(b, f.fileData.data[f.at:f.at+int64(n)])
-	atomic.AddInt64(&f.at, int64(n))
+	copy(b, f.fileData.data[off:off+int64(n)])
+	if n < len(b) {
+		err = io.EOF
+	}
 	return
 }
 
-func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
-	prev := atomic.LoadInt64(&f.at)
-	atomic.StoreInt64(&f.at, off)
-	n, err = f.Read(b)
-	atomic.StoreInt64(&f.at, prev)
+func (f *File) Read(b []byte) (n int, err error) {
+	n, err = f.ReadAt(b, atomic.LoadInt64(&f.at))
+	atomic.AddInt64(&f.at, int64(n))
+	if n > 0 && err == io.EOF {
+		err = nil
+	}
 	return
 }
 
@@ -276,7 +287,7 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	return f.at, nil
 }
 
-func (f *File) Write(b []byte) (n int, err error) {
+func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 	if f.closed {
 		return 0, ErrFileClosed
 	}
@@ -288,13 +299,15 @@ func (f *File) Write(b []byte) (n int, err error) {
 		}
 	}
 	n = len(b)
-	cur := atomic.LoadInt64(&f.at)
+	if n == 0 {
+		return 0, nil
+	}
 	f.fileData.Lock()
 	defer f.fileData.Unlock()
-	diff := cur - int64(len(f.fileData.data))
+	diff := off - int64(len(f.fileData.data))
 	var tail []byte
-	if n+int(cur) < len(f.fileData.data) {
-		tail = f.fileData.data[n+int(cur):]
+	if n+int(off) < len(f.fileData.data) {
+		tail = f.fileData.data[n+int(off):]
 	}
 	if diff > 0 {
 		f.fileData.data = append(
@@ -302,18 +315,17 @@ func (f *File) Write(b []byte) (n int, err error) {
 			append(bytes.Repeat([]byte{0o0}, int(diff)), b...)...)
 		f.fileData.data = append(f.fileData.data, tail...)
 	} else {
-		f.fileData.data = append(f.fileData.data[:cur], b...)
+		f.fileData.data = append(f.fileData.data[:off], b...)
 		f.fileData.data = append(f.fileData.data, tail...)
 	}
 	setModTime(f.fileData, time.Now())
-
-	atomic.AddInt64(&f.at, int64(n))
 	return
 }
 
-func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
-	atomic.StoreInt64(&f.at, off)
-	return f.Write(b)
+func (f *File) Write(b []byte) (n int, err error) {
+	n, err = f.WriteAt(b, atomic.LoadInt64(&f.at))
+	atomic.AddInt64(&f.at, int64(n))
+	return
 }
 
 func (f *File) WriteString(s string) (ret int, err error) {
@@ -353,7 +365,7 @@ func (s *FileInfo) IsDir() bool {
 	defer s.Unlock()
 	return s.dir
 }
-func (s *FileInfo) Sys() interface{} { return nil }
+
 func (s *FileInfo) Size() int64 {
 	if s.IsDir() {
 		return int64(42)
@@ -361,6 +373,12 @@ func (s *FileInfo) Size() int64 {
 	s.Lock()
 	defer s.Unlock()
 	return int64(len(s.data))
+}
+
+func (s *FileInfo) Sys() interface{} {
+	s.Lock()
+	defer s.Unlock()
+	return sysFromFileInfo(s)
 }
 
 var (

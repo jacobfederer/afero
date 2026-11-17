@@ -300,7 +300,14 @@ func (it *objectItMock) Next() (*storage.ObjectAttrs, error) {
 			}
 
 			for _, info := range fInfos {
-				it.infos = append(it.infos, &storage.ObjectAttrs{Name: normSeparators(info.Name()), Size: info.Size(), Updated: info.ModTime()})
+				it.infos = append(
+					it.infos,
+					&storage.ObjectAttrs{
+						Name:    normSeparators(info.Name()),
+						Size:    info.Size(),
+						Updated: info.ModTime(),
+					},
+				)
 			}
 		}
 	}

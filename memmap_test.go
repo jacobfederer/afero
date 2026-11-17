@@ -918,3 +918,257 @@ func TestMemMapFsRename(t *testing.T) {
 		}
 	}
 }
+
+func TestMemMapFsDoubleClose(t *testing.T) {
+	fs := NewMemMapFs()
+	f, err := fs.Create("double-close-test.txt")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := f.Close(); err == nil {
+		t.Fatal("second Close: expected error, got nil")
+	}
+}
+
+func TestMemFsMkDir(t *testing.T) {
+	t.Parallel()
+
+	fs := NewMemMapFs()
+
+	// Creating a folder at "dir" or "/dir" or "./dir" should create the 'dir' directory at root
+	err := fs.Mkdir("a", 0o777)
+	if err != nil {
+		t.Fatalf("MkDir failed: %s", err)
+	}
+
+	err = fs.Mkdir("/b", 0o777)
+	if err != nil {
+		t.Fatalf("MkDir failed: %s", err)
+	}
+
+	err = fs.Mkdir("./c", 0o777)
+	if err != nil {
+		t.Fatalf("MkDir failed: %s", err)
+	}
+
+	// Listing root should return all folders
+	files, err := ReadDir(fs, "/")
+	if err != nil {
+		t.Fatalf("ReadDir failed: %s", err)
+	}
+
+	if len(files) != 3 {
+		t.Fatalf("Expected 3 files, got %d", len(files))
+	}
+
+	var foundA, foundB, foundC bool
+	for _, file := range files {
+		if !file.IsDir() {
+			t.Fatalf("Expected to find a directory not a file: %s", file.Name())
+		}
+		if file.Name() == "a" {
+			foundA = true
+		} else if file.Name() == "b" {
+			foundB = true
+		} else if file.Name() == "c" {
+			foundC = true
+		}
+	}
+
+	if !foundA || !foundB || !foundC {
+		t.Fatalf("Expected to find all files, but didn't")
+	}
+}
+
+func TestMemFsCreateFileNested(t *testing.T) {
+	t.Parallel()
+
+	fs := NewMemMapFs()
+
+	err := fs.Mkdir("dir", 0o777)
+	if err != nil {
+		t.Fatalf("MkDir failed: %s", err)
+	}
+
+	// Creating a file at "dir/a.txt" or "/dir/a.txt" or "./dir/a.txt" should create in the dir directory
+	err = WriteFile(fs, "dir/a.txt", []byte("test"), 0o777)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %s", err)
+	}
+
+	err = WriteFile(fs, "/dir/b.txt", []byte("test"), 0o777)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %s", err)
+	}
+
+	err = WriteFile(fs, "./dir/c.txt", []byte("test"), 0o777)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %s", err)
+	}
+
+	// Listing dir should return all the files
+	files, err := ReadDir(fs, "/dir")
+	if err != nil {
+		t.Fatalf("ReadDir failed: %s", err)
+	}
+
+	if len(files) != 3 {
+		t.Fatalf("Expected 3 files, got %d", len(files))
+	}
+
+	var foundA, foundB, foundC bool
+	for _, file := range files {
+		if file.Name() == "a.txt" {
+			foundA = true
+		} else if file.Name() == "b.txt" {
+			foundB = true
+		} else if file.Name() == "c.txt" {
+			foundC = true
+		}
+	}
+
+	if !foundA || !foundB || !foundC {
+		t.Fatalf("Expected to find all files, but didn't")
+	}
+}
+
+func TestMemMapFsPermissionChecks(t *testing.T) {
+	// Verify that MemMapFs.Open checks file permissions, matching
+	// real filesystem behavior.
+	// See https://github.com/spf13/afero/issues/150
+	fs := &MemMapFs{}
+
+	// Create a file (should get default 0666 permission).
+	f, err := fs.Create("/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("hello")
+	f.Close()
+
+	info, err := fs.Stat("/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o666 {
+		t.Fatalf("expected default permission 0666, got %o", info.Mode().Perm())
+	}
+
+	// File should be readable.
+	f, err = fs.Open("/test.txt")
+	if err != nil {
+		t.Fatalf("Open should succeed with 0666 permissions: %v", err)
+	}
+	f.Close()
+
+	// Chmod to 0 (no permissions).
+	err = fs.Chmod("/test.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open for reading should fail.
+	_, err = fs.Open("/test.txt")
+	if err == nil {
+		t.Fatal("Open should fail with 0 permissions")
+	}
+	if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
+	}
+
+	// OpenFile for writing should also fail.
+	_, err = fs.OpenFile("/test.txt", os.O_WRONLY, 0)
+	if err == nil {
+		t.Fatal("OpenFile (write) should fail with 0 permissions")
+	}
+	if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
+	}
+
+	// Chmod to 0444 (read-only).
+	err = fs.Chmod("/test.txt", 0o444)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open for reading should succeed.
+	f, err = fs.Open("/test.txt")
+	if err != nil {
+		t.Fatalf("Open should succeed with 0444 permissions: %v", err)
+	}
+	f.Close()
+
+	// OpenFile for writing should fail.
+	_, err = fs.OpenFile("/test.txt", os.O_WRONLY, 0)
+	if err == nil {
+		t.Fatal("OpenFile (write) should fail with 0444 permissions")
+	}
+	if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
+	}
+
+	// Chmod to 0222 (write-only).
+	err = fs.Chmod("/test.txt", 0o222)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Open for reading should fail.
+	_, err = fs.Open("/test.txt")
+	if err == nil {
+		t.Fatal("Open (read) should fail with 0222 permissions")
+	}
+	if !os.IsPermission(err) {
+		t.Fatalf("expected permission error, got: %v", err)
+	}
+}
+
+func TestEmptyWritePastEnd(t *testing.T) {
+	for _, fs := range []Fs{NewMemMapFs(), NewOsFs()} {
+		t.Run(fs.Name(), func(t *testing.T) {
+			for _, at := range []bool{false, true} {
+				t.Run(fmt.Sprintf("WriteAt=%t", at), func(t *testing.T) {
+					name := filepath.Join(t.TempDir(), "file")
+					if err := WriteFile(fs, name, []byte("original"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					f, err := fs.OpenFile(name, os.O_RDWR, 0o600)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer f.Close()
+					if _, err := f.Seek(100, io.SeekStart); err != nil {
+						t.Fatal(err)
+					}
+					var n int
+					if at {
+						n, err = f.WriteAt(nil, 100)
+					} else {
+						n, err = f.Write([]byte{})
+					}
+					if n != 0 || err != nil {
+						t.Fatalf("empty write = %d, %v", n, err)
+					}
+					info, err := f.Stat()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if info.Size() != 8 {
+						t.Errorf("size = %d; want 8", info.Size())
+					}
+					pos, err := f.Seek(0, io.SeekCurrent)
+					if err != nil || pos != 100 {
+						t.Errorf("position = %d, %v; want 100", pos, err)
+					}
+					content, err := ReadFile(fs, name)
+					if err != nil || string(content) != "original" {
+						t.Errorf("content = %q, %v; want original", content, err)
+					}
+				})
+			}
+		})
+	}
+}

@@ -1,6 +1,7 @@
 package afero
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 var (
 	_ Lstater        = (*BasePathFs)(nil)
 	_ fs.ReadDirFile = (*BasePathFile)(nil)
+	_ io.WriterTo    = (*BasePathFile)(nil)
+	_ io.ReaderFrom  = (*BasePathFile)(nil)
 )
 
 // The BasePathFs restricts all operations to a given path within an Fs.
@@ -44,6 +47,20 @@ func (f *BasePathFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	return readDirFile{f.File}.ReadDir(n)
 }
 
+func (f *BasePathFile) WriteTo(w io.Writer) (int64, error) {
+	if wt, ok := f.File.(io.WriterTo); ok {
+		return wt.WriteTo(w)
+	}
+	return io.Copy(w, f.File)
+}
+
+func (f *BasePathFile) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := f.File.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(f.File, r)
+}
+
 func NewBasePathFs(source Fs, path string) Fs {
 	return &BasePathFs{source: source, path: path}
 }
@@ -55,12 +72,15 @@ func (b *BasePathFs) RealPath(name string) (path string, err error) {
 		return name, err
 	}
 
-	bpath := filepath.Clean(b.path)
-	path = filepath.Clean(filepath.Join(bpath, name))
-	if !strings.HasPrefix(path, bpath) {
+	path = filepath.Join(b.path, name)
+	rel, err := filepath.Rel(b.path, path)
+	if err != nil {
+		// Usually occurs when files are on different drives.
 		return name, os.ErrNotExist
 	}
-
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return name, os.ErrNotExist
+	}
 	return path, nil
 }
 
